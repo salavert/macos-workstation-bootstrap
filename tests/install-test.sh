@@ -28,6 +28,9 @@ printf 'gh %s\n' "$*" >>"${BOOTSTRAP_TEST_LOG}"
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
   exit "${BOOTSTRAP_TEST_GH_STATUS:-0}"
 fi
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+  exit "${BOOTSTRAP_TEST_GH_REPO_ACCESS:-0}"
+fi
 exit 0
 EOF
 
@@ -147,6 +150,11 @@ if ! grep -q 'WOULD clone' "${test_root}/dry-run.out"; then
   echo "--dry-run did not describe the repository clone." >&2
   exit 1
 fi
+if ! grep -q '^gh repo view salavert/macos-workstation ' "${log}"; then
+  cat "${log}" >&2
+  echo "--dry-run did not verify private repository access when authentication existed." >&2
+  exit 1
+fi
 
 # Check on a clean machine must fail but remain read-only.
 check_home="${test_root}/check-home"
@@ -171,6 +179,34 @@ if grep -Eq 'gh auth setup-git|git clone|git -C .* pull|make ' "${log}"; then
   exit 1
 fi
 
+# Existing GitHub authentication without private-repo access must fail before Git credential setup or cloning.
+access_home="${test_root}/access-home"
+mkdir -p "${access_home}"
+: >"${log}"
+set +e
+HOME="${access_home}" \
+  PATH="${fakebin}:/usr/bin:/bin:/usr/sbin:/sbin" \
+  BOOTSTRAP_TEST_LOG="${log}" \
+  BOOTSTRAP_TEST_GH_REPO_ACCESS=1 \
+  bash "${repo_root}/install.sh" >"${test_root}/access.out" 2>&1
+access_status=$?
+set -e
+if [[ "${access_status}" -eq 0 ]]; then
+  cat "${test_root}/access.out" >&2
+  echo "Installer accepted GitHub authentication without private repository access." >&2
+  exit 1
+fi
+if ! grep -q 'cannot access salavert/macos-workstation' "${test_root}/access.out"; then
+  cat "${test_root}/access.out" >&2
+  echo "Missing actionable private repository access failure." >&2
+  exit 1
+fi
+if grep -Eq 'gh auth setup-git|git clone' "${log}"; then
+  cat "${log}" >&2
+  echo "Installer mutated Git credentials or cloned before repository access was verified." >&2
+  exit 1
+fi
+
 # First install creates the desired fixture state.
 install_home="${test_root}/install-home"
 mkdir -p "${install_home}"
@@ -184,6 +220,16 @@ if [[ ! -d "${workstation}/.git" || ! -x "${workstation}/bootstrap.sh" ]]; then
 fi
 if [[ ! -f "${install_home}/.workstation-test/state" ]]; then
   echo "Private bootstrap was not executed." >&2
+  exit 1
+fi
+if ! grep -q '^gh repo view salavert/macos-workstation ' "${log}"; then
+  cat "${log}" >&2
+  echo "First installation did not verify private repository access." >&2
+  exit 1
+fi
+if ! grep -q '^gh auth setup-git ' "${log}"; then
+  cat "${log}" >&2
+  echo "First installation did not configure Git credentials after access verification." >&2
   exit 1
 fi
 if ! grep -q '^git clone ' "${log}"; then

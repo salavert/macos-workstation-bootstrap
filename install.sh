@@ -7,6 +7,8 @@ WORKSTATION_REPOSITORY="${WORKSTATION_REPOSITORY:-salavert/macos-workstation}"
 WORKSTATION_DIR="${WORKSTATION_DIR:-${HOME}/Developer/personal/macos-workstation}"
 HOMEBREW_INSTALL_URL="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
 failures=0
+github_auth_ready=false
+repository_access_ready=false
 
 usage() {
   cat <<'EOF'
@@ -192,28 +194,65 @@ ensure_github_auth() {
   fi
 
   if gh auth status --hostname "${GITHUB_HOST}" >/dev/null 2>&1; then
+    github_auth_ready=true
     pass "GitHub authentication available"
-  else
-    case "${MODE}" in
-      check)
-        fail "GitHub authentication missing"
-        return 0
-        ;;
-      dry-run)
-        would "authenticate the personal GitHub account in the browser"
-        return 0
-        ;;
-      install)
-        action "authenticate the personal GitHub account in the browser"
-        gh auth login --hostname "${GITHUB_HOST}" --git-protocol https --web
-        ;;
-    esac
+    return 0
   fi
 
-  if [[ "${MODE}" == "install" ]]; then
-    action "configure Git to use GitHub CLI credentials for HTTPS"
-    gh auth setup-git --hostname "${GITHUB_HOST}"
+  case "${MODE}" in
+    check)
+      fail "GitHub authentication missing"
+      ;;
+    dry-run)
+      would "authenticate the personal GitHub account in the browser"
+      ;;
+    install)
+      action "authenticate the personal GitHub account in the browser"
+      gh auth login --hostname "${GITHUB_HOST}" --git-protocol https --web
+      if gh auth status --hostname "${GITHUB_HOST}" >/dev/null 2>&1; then
+        github_auth_ready=true
+        pass "GitHub authentication available"
+      else
+        fail "GitHub authentication did not become available"
+      fi
+      ;;
+  esac
+}
+
+ensure_repository_access() {
+  if ! command -v gh >/dev/null 2>&1; then
+    case "${MODE}" in
+      check) fail "private repository access cannot be checked without gh" ;;
+      dry-run) would "verify access to ${WORKSTATION_REPOSITORY} after GitHub CLI is available" ;;
+      *) fail "GitHub CLI is unavailable; cannot verify private repository access" ;;
+    esac
+    return 0
   fi
+
+  if [[ "${github_auth_ready}" != true ]]; then
+    case "${MODE}" in
+      check) fail "private repository access cannot be checked without GitHub authentication" ;;
+      dry-run) would "verify access to ${WORKSTATION_REPOSITORY} after authentication" ;;
+      *) fail "GitHub authentication is unavailable; cannot access ${WORKSTATION_REPOSITORY}" ;;
+    esac
+    return 0
+  fi
+
+  if gh repo view "${WORKSTATION_REPOSITORY}" --json nameWithOwner --jq '.nameWithOwner' >/dev/null 2>&1; then
+    repository_access_ready=true
+    pass "GitHub access to ${WORKSTATION_REPOSITORY}"
+  else
+    fail "authenticated GitHub account cannot access ${WORKSTATION_REPOSITORY}; switch/login to the personal account and rerun"
+  fi
+}
+
+configure_git_credentials() {
+  if [[ "${MODE}" != "install" || "${repository_access_ready}" != true ]]; then
+    return 0
+  fi
+
+  action "configure Git to use GitHub CLI credentials for HTTPS"
+  gh auth setup-git --hostname "${GITHUB_HOST}"
 }
 
 origin_matches_expected_repository() {
@@ -239,6 +278,10 @@ ensure_repository() {
   local expected_https="https://github.com/${WORKSTATION_REPOSITORY}.git"
   local origin
   local status
+
+  if [[ "${MODE}" == "install" && "${repository_access_ready}" != true ]]; then
+    return 0
+  fi
 
   if [[ ! -e "${WORKSTATION_DIR}" ]]; then
     case "${MODE}" in
@@ -343,6 +386,8 @@ run_private_workstation() {
 ensure_homebrew
 ensure_gh
 ensure_github_auth
+ensure_repository_access
+configure_git_credentials
 ensure_repository
 run_private_workstation
 

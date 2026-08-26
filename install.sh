@@ -6,6 +6,7 @@ GITHUB_HOST="github.com"
 WORKSTATION_REPOSITORY="${WORKSTATION_REPOSITORY:-salavert/macos-workstation}"
 WORKSTATION_DIR="${WORKSTATION_DIR:-${HOME}/Developer/personal/macos-workstation}"
 HOMEBREW_INSTALL_URL="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+MINIMUM_FREE_GIB=30
 failures=0
 github_auth_ready=false
 repository_access_ready=false
@@ -52,17 +53,17 @@ fail() {
   failures=$((failures + 1))
 }
 
-fatal() {
-  fail "$1"
-  finish
-}
-
 finish() {
   printf '\nResult: %d failure(s)\n' "${failures}"
   if [[ "${failures}" -ne 0 ]]; then
     exit 1
   fi
   exit 0
+}
+
+fatal() {
+  fail "$1"
+  finish
 }
 
 while [[ "$#" -gt 0 ]]; do
@@ -110,6 +111,56 @@ if [[ "${EUID}" -eq 0 ]]; then
   fatal "do not run this installer as root or with sudo"
 fi
 pass "running as a standard user"
+
+ensure_command_line_tools() {
+  if xcode-select -p >/dev/null 2>&1; then
+    pass "Xcode/Command Line Tools selected"
+    return 0
+  fi
+
+  case "${MODE}" in
+    check)
+      fail "Xcode/Command Line Tools are missing"
+      ;;
+    dry-run)
+      would "request Apple's Command Line Tools installer before Homebrew"
+      ;;
+    install)
+      action "request Apple's Command Line Tools installer"
+      xcode-select --install >/dev/null 2>&1 || true
+      if xcode-select -p >/dev/null 2>&1; then
+        pass "Xcode/Command Line Tools selected"
+      else
+        fail "Command Line Tools installation is pending; complete Apple's installer and rerun"
+      fi
+      ;;
+  esac
+}
+
+check_disk_space() {
+  local target="/System/Volumes/Data"
+  local available_kb
+  local available_gib
+  local minimum_kb=$((MINIMUM_FREE_GIB * 1024 * 1024))
+
+  if [[ ! -d "${target}" ]]; then
+    target="/"
+  fi
+
+  available_kb="$(df -Pk "${target}" 2>/dev/null | awk 'NR == 2 {print $4}')"
+  if [[ "${available_kb}" =~ ^[0-9]+$ ]]; then
+    available_gib=$((available_kb / 1024 / 1024))
+  else
+    fail "unable to determine available disk space"
+    return 0
+  fi
+
+  if [[ "${available_kb}" -ge "${minimum_kb}" ]]; then
+    pass "at least ${MINIMUM_FREE_GIB} GiB free (${available_gib} GiB available)"
+  else
+    fail "at least ${MINIMUM_FREE_GIB} GiB free is required before provisioning (${available_gib} GiB available)"
+  fi
+}
 
 configure_brew_path() {
   if command -v brew >/dev/null 2>&1; then
@@ -246,6 +297,35 @@ ensure_repository_access() {
   fi
 }
 
+ensure_chezmoi() {
+  if command -v chezmoi >/dev/null 2>&1; then
+    pass "chezmoi available for repository tests"
+    return 0
+  fi
+
+  case "${MODE}" in
+    check)
+      fail "chezmoi missing"
+      ;;
+    dry-run)
+      would "install chezmoi with Homebrew before running repository tests"
+      ;;
+    install)
+      if ! command -v brew >/dev/null 2>&1; then
+        fail "cannot install chezmoi because Homebrew is unavailable"
+        return 0
+      fi
+      action "install chezmoi with Homebrew before running repository tests"
+      brew install chezmoi
+      if command -v chezmoi >/dev/null 2>&1; then
+        pass "chezmoi installed"
+      else
+        fail "chezmoi installation completed but chezmoi is unavailable"
+      fi
+      ;;
+  esac
+}
+
 configure_git_credentials() {
   if [[ "${MODE}" != "install" || "${repository_access_ready}" != true ]]; then
     return 0
@@ -375,6 +455,10 @@ run_private_workstation() {
       fi
       ;;
     install)
+      if ! command -v chezmoi >/dev/null 2>&1; then
+        fail "chezmoi unavailable before repository tests; refusing to continue"
+        return 0
+      fi
       action "run workstation repository tests"
       make -C "${WORKSTATION_DIR}" test
       action "run private workstation bootstrap"
@@ -383,10 +467,25 @@ run_private_workstation() {
   esac
 }
 
+ensure_command_line_tools
+check_disk_space
+if [[ "${MODE}" == "install" && "${failures}" -ne 0 ]]; then
+  finish
+fi
+
 ensure_homebrew
 ensure_gh
 ensure_github_auth
 ensure_repository_access
+if [[ "${MODE}" == "install" && "${failures}" -ne 0 ]]; then
+  finish
+fi
+
+ensure_chezmoi
+if [[ "${MODE}" == "install" && "${failures}" -ne 0 ]]; then
+  finish
+fi
+
 configure_git_credentials
 ensure_repository
 run_private_workstation

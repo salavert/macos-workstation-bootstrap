@@ -28,14 +28,27 @@ Environment overrides:
 EOF
 }
 
-pass() { printf 'PASS  %s\n' "$1"; }
-skip() { printf 'SKIP  %s\n' "$1"; }
-would() { printf 'WOULD %s\n' "$1"; }
-action() { printf 'DO    %s\n' "$1"; }
+pass() {
+  printf 'PASS  %s\n' "$1"
+}
+
+skip() {
+  printf 'SKIP  %s\n' "$1"
+}
+
+would() {
+  printf 'WOULD %s\n' "$1"
+}
+
+action() {
+  printf 'DO    %s\n' "$1"
+}
+
 fail() {
   printf 'FAIL  %s\n' "$1" >&2
   failures=$((failures + 1))
 }
+
 finish() {
   printf '\nResult: %d failure(s)\n' "${failures}"
   [[ "${failures}" -eq 0 ]]
@@ -44,7 +57,10 @@ finish() {
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --dry-run)
-      [[ "${MODE}" == "install" ]] || { echo "Error: choose only one mode." >&2; exit 2; }
+      [[ "${MODE}" == "install" ]] || {
+        echo "Error: choose only one mode." >&2
+        exit 2
+      }
       MODE="dry-run"
       ;;
     -h | --help)
@@ -62,9 +78,23 @@ done
 
 printf 'macos-workstation bootstrap (%s)\n\n' "${MODE}"
 
-[[ "$(uname -s)" == "Darwin" ]] && pass "macOS" || fail "macOS is required"
-[[ "$(uname -m)" == "arm64" ]] && pass "Apple Silicon" || fail "Apple Silicon (arm64) is required"
-[[ "${EUID}" -ne 0 ]] && pass "running as a standard user" || fail "do not run this installer as root or with sudo"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  pass "macOS"
+else
+  fail "macOS is required"
+fi
+
+if [[ "$(uname -m)" == "arm64" ]]; then
+  pass "Apple Silicon"
+else
+  fail "Apple Silicon (arm64) is required"
+fi
+
+if [[ "${EUID}" -ne 0 ]]; then
+  pass "running as a standard user"
+else
+  fail "do not run this installer as root or with sudo"
+fi
 
 if xcode-select -p >/dev/null 2>&1; then
   pass "Xcode/Command Line Tools selected"
@@ -90,8 +120,12 @@ if [[ "${MODE}" == "install" && "${failures}" -ne 0 ]]; then
 fi
 
 configure_brew_path() {
-  command -v brew >/dev/null 2>&1 && return 0
-  [[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+  if command -v brew >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x /opt/homebrew/bin/brew ]]; then
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+  fi
 }
 
 configure_brew_path
@@ -103,17 +137,11 @@ else
   action "install Homebrew using the official installer"
   /bin/bash -c "$(curl -fsSL "${HOMEBREW_INSTALL_URL}")"
   configure_brew_path
-  command -v brew >/dev/null 2>&1 && pass "Homebrew installed" || fail "Homebrew installation completed but brew is unavailable"
-fi
-
-if command -v gh >/dev/null 2>&1; then
-  pass "GitHub CLI available"
-elif [[ "${MODE}" == "dry-run" ]]; then
-  would "install GitHub CLI with Homebrew"
-else
-  action "install GitHub CLI with Homebrew"
-  brew install gh
-  command -v gh >/dev/null 2>&1 && pass "GitHub CLI installed" || fail "GitHub CLI installation completed but gh is unavailable"
+  if command -v brew >/dev/null 2>&1; then
+    pass "Homebrew installed"
+  else
+    fail "Homebrew installation completed but brew is unavailable"
+  fi
 fi
 
 origin_matches() {
@@ -122,8 +150,12 @@ origin_matches() {
     "https://github.com/${WORKSTATION_REPOSITORY}" | \
       "git@github.com:${WORKSTATION_REPOSITORY}" | \
       "git@github.com-personal:${WORKSTATION_REPOSITORY}" | \
-      "ssh://git@github.com/${WORKSTATION_REPOSITORY}") return 0 ;;
-    *) return 1 ;;
+      "ssh://git@github.com/${WORKSTATION_REPOSITORY}")
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
   esac
 }
 
@@ -138,11 +170,11 @@ else
   else
     pass "workstation repository origin"
     case "${origin}" in
-      https://github.com/* | git@github.com:* | ssh://git@github.com/*)
+      https://github.com/*)
         repository_needs_https_auth=true
         ;;
-      git@github.com-personal:*)
-        skip "GitHub HTTPS credentials not required for personal SSH origin"
+      git@github.com:* | git@github.com-personal:* | ssh://git@github.com/*)
+        skip "GitHub HTTPS credentials not required for SSH origin"
         ;;
     esac
   fi
@@ -156,9 +188,36 @@ else
   fi
 fi
 
+ensure_gh() {
+  if command -v gh >/dev/null 2>&1; then
+    pass "GitHub CLI available"
+    return 0
+  fi
+
+  if [[ "${MODE}" == "dry-run" ]]; then
+    would "install GitHub CLI with Homebrew"
+    return 0
+  fi
+
+  action "install GitHub CLI with Homebrew"
+  brew install gh
+  if command -v gh >/dev/null 2>&1; then
+    pass "GitHub CLI installed"
+  else
+    fail "GitHub CLI installation completed but gh is unavailable"
+  fi
+}
+
 if [[ "${repository_needs_https_auth}" == true ]]; then
+  ensure_gh
+
   if ! command -v gh >/dev/null 2>&1; then
-    [[ "${MODE}" == "dry-run" ]] && would "authenticate GitHub after gh is installed" || fail "GitHub CLI unavailable"
+    if [[ "${MODE}" == "dry-run" ]]; then
+      would "authenticate GitHub after gh is installed"
+      would "verify access to ${WORKSTATION_REPOSITORY}"
+    else
+      fail "GitHub CLI unavailable"
+    fi
   elif gh auth status --hostname "${GITHUB_HOST}" >/dev/null 2>&1; then
     pass "GitHub authentication available"
     if gh repo view "${WORKSTATION_REPOSITORY}" --json nameWithOwner --jq '.nameWithOwner' >/dev/null 2>&1; then
@@ -184,6 +243,8 @@ if [[ "${repository_needs_https_auth}" == true ]]; then
       fail "authenticated GitHub account cannot access ${WORKSTATION_REPOSITORY}"
     fi
   fi
+else
+  skip "GitHub CLI bootstrap authentication not required"
 fi
 
 if [[ "${MODE}" == "install" && "${failures}" -ne 0 ]]; then

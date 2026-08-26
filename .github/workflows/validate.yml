@@ -1,0 +1,26 @@
+name: Validate bootstrap
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install validation tools
+        run: brew install shellcheck shfmt
+      - name: Bash syntax
+        run: bash -n install.sh tests/install-test.sh
+      - name: ShellCheck
+        run: shellcheck install.sh tests/install-test.sh
+      - name: Formatting
+        run: shfmt -d -i 2 -ci install.sh tests/install-test.sh
+      - name: Behavioral tests
+        run: bash tests/install-test.sh

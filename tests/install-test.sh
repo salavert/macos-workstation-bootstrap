@@ -245,12 +245,12 @@ if [[ "${access_status}" -eq 0 ]]; then
 fi
 fail_if_log_matches '^git clone ' "private repository was cloned without verified access"
 
-# Once the checkout uses SSH, public re-entry does not depend on the active gh account.
+# Once the checkout uses canonical SSH, public re-entry does not depend on gh auth.
 : >"${log}"
 HOME="${install_home}" \
   PATH="${fakebin}:/usr/bin:/bin:/usr/sbin:/sbin" \
   BOOTSTRAP_TEST_LOG="${log}" \
-  BOOTSTRAP_TEST_ORIGIN='git@github.com-personal:salavert/macos-workstation.git' \
+  BOOTSTRAP_TEST_ORIGIN='git@github.com:salavert/macos-workstation.git' \
   BOOTSTRAP_TEST_GH_STATUS=1 \
   BOOTSTRAP_TEST_GH_REPO_ACCESS=1 \
   bash "${repo_root}/install.sh" >/dev/null
@@ -263,6 +263,27 @@ fi
 if ! grep -q '^private-bootstrap $' "${log}"; then
   cat "${log}" >&2
   echo "SSH re-entry did not hand off to private bootstrap" >&2
+  exit 1
+fi
+
+# Old synthetic work/personal aliases are deliberately rejected.
+legacy_home="${test_root}/legacy-home"
+mkdir -p "${legacy_home}/Developer/personal/macos-workstation/.git"
+cat >"${legacy_home}/Developer/personal/macos-workstation/bootstrap.sh" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+chmod 755 "${legacy_home}/Developer/personal/macos-workstation/bootstrap.sh"
+set +e
+HOME="${legacy_home}" \
+  PATH="${fakebin}:/usr/bin:/bin:/usr/sbin:/sbin" \
+  BOOTSTRAP_TEST_LOG="${log}" \
+  BOOTSTRAP_TEST_ORIGIN='git@github.com-personal:salavert/macos-workstation.git' \
+  bash "${repo_root}/install.sh" >/dev/null 2>&1
+legacy_status=$?
+set -e
+if [[ "${legacy_status}" -eq 0 ]]; then
+  echo "legacy GitHub SSH alias was accepted" >&2
   exit 1
 fi
 

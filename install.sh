@@ -149,7 +149,6 @@ origin_matches() {
   case "${origin}" in
     "https://github.com/${WORKSTATION_REPOSITORY}" | \
       "git@github.com:${WORKSTATION_REPOSITORY}" | \
-      "git@github.com-personal:${WORKSTATION_REPOSITORY}" | \
       "ssh://git@github.com/${WORKSTATION_REPOSITORY}")
       return 0
       ;;
@@ -173,7 +172,7 @@ else
       https://github.com/*)
         repository_needs_https_auth=true
         ;;
-      git@github.com:* | git@github.com-personal:* | ssh://git@github.com/*)
+      git@github.com:* | ssh://git@github.com/*)
         skip "GitHub HTTPS credentials not required for SSH origin"
         ;;
     esac
@@ -227,13 +226,13 @@ if [[ "${repository_needs_https_auth}" == true ]]; then
         gh auth setup-git --hostname "${GITHUB_HOST}"
       fi
     else
-      fail "authenticated GitHub account cannot access ${WORKSTATION_REPOSITORY}; switch/login to the personal account and rerun"
+      fail "authenticated GitHub account cannot access ${WORKSTATION_REPOSITORY}; authenticate the account that owns this repository and rerun"
     fi
   elif [[ "${MODE}" == "dry-run" ]]; then
-    would "authenticate the personal GitHub account in the browser"
+    would "authenticate the GitHub account in the browser"
     would "verify access to ${WORKSTATION_REPOSITORY}"
   else
-    action "authenticate the personal GitHub account in the browser"
+    action "authenticate the GitHub account in the browser"
     gh auth login --hostname "${GITHUB_HOST}" --git-protocol https --web
     if gh repo view "${WORKSTATION_REPOSITORY}" --json nameWithOwner --jq '.nameWithOwner' >/dev/null 2>&1; then
       pass "GitHub access to ${WORKSTATION_REPOSITORY}"

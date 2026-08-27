@@ -47,13 +47,13 @@ private bootstrap.sh
 
 That is all. Package selection, dotfiles, runtime policy, diagnostics and migration rules belong to the private repository.
 
-The first checkout uses HTTPS because machine-specific SSH keys do not exist yet. After the personal SSH alias is configured, the private runbook changes `origin` to:
+The first checkout uses HTTPS because the new Mac does not have its fresh SSH key yet. After the single GitHub SSH key is configured, the private runbook changes `origin` to the canonical remote:
 
 ```text
-git@github.com-personal:salavert/macos-workstation.git
+git@github.com:salavert/macos-workstation.git
 ```
 
-On later runs with that SSH origin, the public loader no longer depends on which GitHub account is active in `gh`; Git authentication is owned by the explicit SSH alias.
+On later runs with that SSH origin, the public loader no longer needs GitHub CLI credentials for Git transport. GitHub authentication is a single-account concern; personal versus Telefónica commit email is handled only by the private Git configuration.
 
 ## Safety
 
